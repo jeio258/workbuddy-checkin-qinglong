@@ -41,6 +41,10 @@ STATUS_EP = API_BASE + "/checkin-activity-status"
 CHECKIN_EP = API_BASE + "/daily-checkin"
 # 积分/套餐接口走 www.codebuddy.cn（Windows 版与参考项目均在此域名实测可用）
 CREDIT_EP = "https://www.codebuddy.cn/v2/billing/meter/get-user-resource"
+# 官方 CLI UA 与 X-Domain 头：get-user-resource 会校验请求合法性（缺则报 10085 请求不合法），
+# 与 Windows 版/参考项目实测可用的请求头一致；X-Domain 可用 WB_DOMAIN 覆盖
+CLIENT_UA = "CLI/2.63.2 CodeBuddy/2.63.2"
+DOMAIN = os.environ.get("WB_DOMAIN", "").strip() or "www.codebuddy.cn"
 
 NOTIFY = str(os.environ.get("QINGLONG_NOTIFY", "1")).lower() in ("1", "true", "yes")
 
@@ -172,6 +176,8 @@ def http_post(url, token, uid, body="{}"):
         "Accept": "application/json",
         "Authorization": "Bearer " + token,
         "X-User-Id": uid or "",
+        "X-Domain": DOMAIN,
+        "User-Agent": CLIENT_UA,
     }
     if HAVE_REQUESTS:
         resp = requests.post(url, headers=headers, data=body, timeout=20)
@@ -190,6 +196,8 @@ def http_get(url, token, uid):
         "Accept": "application/json",
         "Authorization": "Bearer " + token,
         "X-User-Id": uid or "",
+        "X-Domain": DOMAIN,
+        "User-Agent": CLIENT_UA,
     }
     if HAVE_REQUESTS:
         resp = requests.get(url, headers=headers, timeout=20)
@@ -255,7 +263,8 @@ def fmt_status(data, head):
 
 def fetch_user_resource(token, uid):
     """查询积分/套餐（多套餐包聚合）。返回 (summary_dict, 错误消息)。"""
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    # 计费数据以北京时区计；青龙容器默认 UTC，手动偏移 8 小时避免范围偏差
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() + 8 * 3600))
     body = json.dumps({
         "PageNumber": 1,
         "PageSize": 100,

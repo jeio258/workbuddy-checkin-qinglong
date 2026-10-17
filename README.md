@@ -146,6 +146,7 @@ flowchart LR
 | `WB_TRAVEL_LOCATION` | 否 | 宠物探险地点（`workbuddy_buddy_travel.py`）：填数字 id 或 code，不填取配置第一个 |
 | `WB_TRAVEL_AUTO_DEPART` | 否 | 默认 `1`；设为 `0` 则【只领取、不自动派出】 |
 | `WB_PROXY` | 否 | 默认直连；如需代理填 `http://127.0.0.1:7897` 或 `socks5://127.0.0.1:7897` |
+| `WB_DOMAIN` | 否 | `X-Domain` 请求头，默认 `www.codebuddy.cn`（国际版账号可改为 `workbuddy.ai`） |
 | `QINGLONG_NOTIFY` | 否 | 默认 `1`；设为 `0` 关闭青龙通知标记 |
 
 ## 🗺️ 路线图
