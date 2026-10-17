@@ -61,8 +61,23 @@ PROXY = os.environ.get("WB_PROXY", "").strip()
 PROXIES = {"http": PROXY, "https": PROXY} if PROXY else {"http": None, "https": None}
 
 
+_OUT = []
+
+
 def log(msg):
     print(msg)
+    _OUT.append(str(msg))
+
+
+def notify(title, content):
+    """通过青龙 QLAPI 发送通知（使用面板配置的 PushPlus 渠道）。"""
+    if str(os.environ.get("QINGLONG_NOTIFY", "1")).lower() not in ("1", "true", "yes"):
+        return
+    try:
+        QLAPI.systemNotify({"title": title, "content": content})
+        print("📨 通知已推送")
+    except Exception as e:
+        print(f"⚠️ 通知发送失败: {e}")
 
 
 def decode_jwt_sub(token):
@@ -233,6 +248,7 @@ def main():
             log(f"❌ [{tag}] {msg}")
         time.sleep(1)
     log(f"🏁 完成：成功 {ok} / 失败 {fail} / 共 {len(accounts)}")
+    notify(f"WorkBuddy 自动探险：成功 {ok} / 失败 {fail}", "\n".join(_OUT))
     if fail > 0:
         sys.exit(1)
 

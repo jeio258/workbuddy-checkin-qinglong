@@ -29,7 +29,7 @@
 
 | 脚本 | 功能 | 状态 |
 | --- | --- | --- |
-| `workbuddy_checkin.py` | 每日自动签到，领取积分 | ✅ 稳定 |
+| `workbuddy_checkin.py` | 每日自动签到，领取积分；回传积分/套餐数据（总积分/剩余/已用） | ✅ 稳定 |
 | `workbuddy_buddy_travel.py` | 宠物自动探险（派出）+ 归来自动领积分 | ✅ 稳定 |
 
 两个脚本共用同一套设计原则：
@@ -76,8 +76,8 @@ pip install -r requirements.txt   # 仅 requests
 # 单账号
 export WB_ACCESS_TOKEN="eyJxxxx.your.token"
 
-# 多账号（逗号分隔，支持 uid:token 或纯 token）
-export WB_ACCESS_TOKENS="eyJ...a,10086:eyJ...b"
+# 多账号（逗号分隔；支持 uid:nickname:token / uid:token / 纯 token）
+export WB_ACCESS_TOKENS="eyJ...a,10086:小明:eyJ...b,8888:阿花:eyJ...c"
 ```
 
 青龙里给两个脚本分别建任务，命令如：
@@ -101,7 +101,8 @@ flowchart TD
   B -- 是 --> C[跳过 · 无副作用]
   B -- 否 --> D[调用 daily-checkin]
   D --> E[领取积分]
-  E --> F[打印结果 · 青龙推送通知]
+  E --> F[回传积分/套餐数据]
+  F --> G[打印结果 · 青龙推送通知]
 ```
 
 **宠物自动探险（状态机）**
@@ -140,7 +141,7 @@ flowchart LR
 | 变量名 | 必填 | 说明 |
 | --- | --- | --- |
 | `WB_ACCESS_TOKEN` | 二选一 | 单个账号的 Token |
-| `WB_ACCESS_TOKENS` | 二选一 | 多账号，逗号分隔；支持 `uid:token` 或纯 `token` |
+| `WB_ACCESS_TOKENS` | 二选一 | 多账号，逗号分隔；支持 `uid:nickname:token` / `uid:token` / 纯 `token`（nickname 用于区分多账号，可含冒号） |
 | `WB_USER_ID` | 否 | 手动指定 X-User-Id；不填时自动从 JWT 解析 `sub` |
 | `WB_TRAVEL_LOCATION` | 否 | 宠物探险地点（`workbuddy_buddy_travel.py`）：填数字 id 或 code，不填取配置第一个 |
 | `WB_TRAVEL_AUTO_DEPART` | 否 | 默认 `1`；设为 `0` 则【只领取、不自动派出】 |
@@ -166,7 +167,7 @@ flowchart LR
 <details>
 <summary><b>Q：多账号怎么配？</b></summary>
 
-用 `WB_ACCESS_TOKENS`，逗号分隔多个 Token；如需指定 uid 用 `uid:token` 形式。
+用 `WB_ACCESS_TOKENS`，逗号分隔多个 Token；如需区分账号显示用 `uid:nickname:token` 形式，只指定 uid 用 `uid:token` 形式。
 </details>
 
 <details>
