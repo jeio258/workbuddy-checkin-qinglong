@@ -22,10 +22,12 @@ WorkBuddy 宠物(Buddy)自动探险(派出)与积分自动领取（青龙面板�
 
 环境变量：
   WB_ACCESS_TOKEN    单个账号 Bearer Token（必填其一）
-  WB_ACCESS_TOKENS   多账号 Token，逗号分隔；支持 "uid:token" 或纯 "token"（必填其一）
+  WB_ACCESS_TOKENS   多账号 Token，逗号分隔；支持 "uid:nickname:token" / "uid:token" / 纯 "token"（必填其一）
   WB_USER_ID         可选，X-User-Id；不填则尝试从 JWT 解析 sub
   WB_TRAVEL_LOCATION 可选，派出地点。填数字 id(如 1) 或 code(如 coffee)；不填则取配置里第一个地点
   WB_TRAVEL_AUTO_DEPART  可选，默认 1；设为 0 则【只领取、不自动派出】
+  WB_PROXY           可选，代理；不填直连（避免系统 SOCKS 代理导致 socks 支持崩溃）
+  WB_DOMAIN          可选，X-Domain 头；默认 www.codebuddy.cn
   QINGLONG_NOTIFY    可选，默认 1；设为 0 关闭青龙通知标记
 
 本地调试（不依赖青龙）：
@@ -52,6 +54,9 @@ CONFIG_EP = "/activity/growth/buddy/travel/config"
 DEPART_EP = "/activity/growth/buddy/travel/depart"
 CLAIM_EP = "/activity/growth/buddy/travel/claim"
 
+# 官方 CLI UA 与 X-Domain 头，与 workbuddy_checkin.py 保持一致；X-Domain 可用 WB_DOMAIN 覆盖
+CLIENT_UA = "CLI/2.63.2 CodeBuddy/2.63.2"
+DOMAIN = os.environ.get("WB_DOMAIN", "").strip() or "www.codebuddy.cn"
 NOTIFY = str(os.environ.get("QINGLONG_NOTIFY", "1")).lower() in ("1", "true", "yes")
 AUTO_DEPART = str(os.environ.get("WB_TRAVEL_AUTO_DEPART", "1")).lower() in ("1", "true", "yes", "")
 LOCATION_ARG = os.environ.get("WB_TRAVEL_LOCATION", "").strip()
@@ -90,30 +95,47 @@ def decode_jwt_sub(token):
         return ""
 
 
+def decode_jwt_exp(token):
+    """解码 JWT payload 的 exp（Unix 秒），用于过期预警。失败返回 0。"""
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(part).decode("utf-8", "ignore"))
+        return int(payload.get("exp") or 0)
+    except Exception:
+        return 0
+
+
 def get_accounts():
+    """从环境变量读取账号列表，返回 [(uid, nickname, token), ...]。
+
+    支持 "uid:nickname:token" / "uid:token" / 纯 "token" 三种格式，逗号分隔。
+    """
     tokens_raw = os.environ.get("WB_ACCESS_TOKENS", "").strip()
     single = os.environ.get("WB_ACCESS_TOKEN", "").strip()
     tokens = []
     if tokens_raw:
+        # token 为 base64url 不含冒号，从右拆出 token 安全；左侧再拆 uid:nickname（昵称可含冒号）
         for item in tokens_raw.split(","):
             item = item.strip()
             if not item:
                 continue
-            if ":" in item and len(item.split(":")) == 2 and not item.startswith("eyJ"):
-                uid, tok = item.split(":", 1)
-                tokens.append((uid.strip(), tok.strip()))
+            if ":" in item and not item.startswith("eyJ"):
+                head, _, tok = item.rpartition(":")
+                uid, _, nick = head.partition(":")
+                tokens.append((uid.strip(), nick.strip(), tok.strip()))
             else:
-                tokens.append(("", item))
+                tokens.append(("", "", item))
     if single:
-        tokens.append(("", single.strip()))
+        tokens.append(("", "", single.strip()))
     if not tokens:
         log("❌ 未检测到 Token：请设置环境变量 WB_ACCESS_TOKEN 或 WB_ACCESS_TOKENS")
         return []
     fixed = []
-    for uid, tok in tokens:
+    for uid, nick, tok in tokens:
         if not uid:
             uid = decode_jwt_sub(tok)
-        fixed.append((uid, tok))
+        fixed.append((uid, nick, tok))
     return fixed
 
 
@@ -123,7 +145,8 @@ def http(method, url, token, uid, body="{}"):
         "Accept": "application/json",
         "Authorization": "Bearer " + token,
         "X-User-Id": uid or "",
-        "User-Agent": "Mozilla/5.0",
+        "X-Domain": DOMAIN,
+        "User-Agent": CLIENT_UA,
     }
     if HAVE_REQUESTS:
         resp = requests.request(method, url, headers=headers, data=body, timeout=20, proxies=PROXIES)
@@ -131,7 +154,7 @@ def http(method, url, token, uid, body="{}"):
     else:
         req = urllib.request.Request(url, data=body.encode("utf-8"), headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.build_opener(urllib.request.ProxyHandler(PROXIES)).open(req, timeout=20) as r:
                 return r.status, r.read().decode("utf-8", "ignore")
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode("utf-8", "ignore")
@@ -234,8 +257,17 @@ def main():
         sys.exit(2)
     log(f"🐱 WorkBuddy 宠物自动探险开始，共 {len(accounts)} 个账号")
     ok, fail = 0, 0
-    for idx, (uid, token) in enumerate(accounts, 1):
-        tag = (uid[:8] + "…") if uid else f"账号{idx}"
+    for idx, (uid, nickname, token) in enumerate(accounts, 1):
+        # 展示名：优先昵称，其次 uid 前 8 位，都没有才用序号（多账号时区分谁是谁）
+        tag = nickname or ((uid[:8] + "…") if uid else f"账号{idx}")
+        # 过期预警：JWT exp 距现在 < 7 天时提示（不阻塞探险流程）
+        exp = decode_jwt_exp(token)
+        if exp:
+            remain_days = (exp - time.time()) / 86400
+            if remain_days < 0:
+                log(f"⚠️ [{tag}] Token 已过期（JWT exp），接口将返回 401")
+            elif remain_days < 7:
+                log(f"⚠️ [{tag}] Token 将于约 {int(remain_days)} 天后过期，请提前更新")
         try:
             success, msg = travel_one(uid, token)
         except Exception as e:

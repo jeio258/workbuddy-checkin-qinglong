@@ -15,6 +15,8 @@ WorkBuddy 每日自动签到（青龙面板版）
   WB_ACCESS_TOKEN   单个账号的 Bearer Token（必填其一）
   WB_ACCESS_TOKENS  多个账号 Token，逗号分隔（必填其一）；支持 "uid:nickname:token" / "uid:token" / 纯 "token"
   WB_USER_ID        可选，X-User-Id 头；不填则尝试从 JWT 解析 sub
+  WB_PROXY          可选，代理；不填直连（避免系统 SOCKS 代理导致 socks 支持崩溃）
+  WB_DOMAIN         可选，X-Domain 头；默认 www.codebuddy.cn
   QINGLONG_NOTIFY   可选，1/true 时打印青龙通知标记（默认开启，青龙自动捕获 stdout）
 
 本地调试（不依赖青龙）：
@@ -45,6 +47,10 @@ CREDIT_EP = "https://www.codebuddy.cn/v2/billing/meter/get-user-resource"
 # 与 Windows 版/参考项目实测可用的请求头一致；X-Domain 可用 WB_DOMAIN 覆盖
 CLIENT_UA = "CLI/2.63.2 CodeBuddy/2.63.2"
 DOMAIN = os.environ.get("WB_DOMAIN", "").strip() or "www.codebuddy.cn"
+# 代理：默认直连（避免系统 SOCKS 代理导致的 "Missing dependencies for SOCKS support" 崩溃）。
+# 如需走代理，设置 WB_PROXY，例如 http://127.0.0.1:7897 或 socks5://127.0.0.1:7897
+PROXY = os.environ.get("WB_PROXY", "").strip()
+PROXIES = {"http": PROXY, "https": PROXY} if PROXY else {"http": None, "https": None}
 
 NOTIFY = str(os.environ.get("QINGLONG_NOTIFY", "1")).lower() in ("1", "true", "yes")
 
@@ -180,12 +186,12 @@ def http_post(url, token, uid, body="{}"):
         "User-Agent": CLIENT_UA,
     }
     if HAVE_REQUESTS:
-        resp = requests.post(url, headers=headers, data=body, timeout=20)
+        resp = requests.post(url, headers=headers, data=body, timeout=20, proxies=PROXIES)
         return resp.status_code, resp.text
     else:
         req = urllib.request.Request(url, data=body.encode("utf-8"), headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.build_opener(urllib.request.ProxyHandler(PROXIES)).open(req, timeout=20) as r:
                 return r.status, r.read().decode("utf-8", "ignore")
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode("utf-8", "ignore")
@@ -200,12 +206,12 @@ def http_get(url, token, uid):
         "User-Agent": CLIENT_UA,
     }
     if HAVE_REQUESTS:
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = requests.get(url, headers=headers, timeout=20, proxies=PROXIES)
         return resp.status_code, resp.text
     else:
         req = urllib.request.Request(url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.build_opener(urllib.request.ProxyHandler(PROXIES)).open(req, timeout=20) as r:
                 return r.status, r.read().decode("utf-8", "ignore")
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode("utf-8", "ignore")
